@@ -15,6 +15,10 @@ from oauthlib.oauth2 import LegacyApplicationClient
 from requests_oauthlib import OAuth2Session
 from requests.exceptions import HTTPError
 
+from sched import scheduler
+
+import time
+
 
 def configure(config):
     """
@@ -56,6 +60,7 @@ def setup(sopel):
         sopel.memory['ogs_token'] = token
     except:
         raise ConfigurationError('Could not authenticate with OGS')
+    sopel.memory['ogs_sched'] = scheduler(time.time, time.sleep)
 
 
 def ogs_get(sopel, url):
@@ -160,7 +165,16 @@ def ogs_game(sopel, trigger):
         sopel.reply(get_ogs_game_api(sopel, game))
 
 
+def delayed_say(sopel, func, *args):
+    sopel.say(func(sopel, *args))
+
+
 @rule(r'.*online-go.com/game/(?P<id>\d+).*')
 def get_ogs_game(sopel, trigger):
     """Show information for a given OGS game"""
-    sopel.say(get_ogs_game_api(sopel, int(trigger.match.group('id'))))
+    # Delay this request, otherwise the API may return empty
+    # fields before the game is fully configured
+    sched = sopel.memory['ogs_sched']
+    sched.enter(5, 1, delayed_say,
+                (sopel, get_ogs_game_api, int(trigger.match.group('id'))))
+    sched.run()
