@@ -1,0 +1,2 @@
+sopel>=6.0,<7
+requests_oauthlib==0.6.1
