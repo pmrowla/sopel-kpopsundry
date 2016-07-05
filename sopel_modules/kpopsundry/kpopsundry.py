@@ -8,7 +8,12 @@ Author: Peter Rowlands <peter@pmrowla.com>
 
 from __future__ import unicode_literals, absolute_import, division
 
-from sopel.module import commands, example, rule
+from sopel.module import (
+    commands,
+    example,
+    require_admin,
+    rule,
+)
 from sopel.config import ConfigurationError
 
 from oauthlib.oauth2 import LegacyApplicationClient
@@ -18,6 +23,76 @@ from requests.exceptions import HTTPError
 from sched import scheduler
 
 import time
+
+
+def remember_respond(sopel, trigger):
+    remember = trigger.match.group('remember')
+    response = sopel.memory['remember'].get(remember)
+    if response:
+        sopel.say(response)
+
+
+def add_remember(sopel, remember, response, update_db=True):
+    old_response = sopel.memory['remember'].get(remember)
+    sopel.memory['remember'][remember] = response
+    regex = r'^(.*\s)?(?P<remember>{})(\s.*)?$'.format(remember)
+    rule(regex)(remember_respond)
+    if update_db:
+        if old_response:
+            q = 'UPDATE kps_remember SET response = ? WHERE remember = ?;'
+            sopel.db.execute(q, (response, remember))
+        else:
+            q = 'INSERT INTO kps_remember (remember, response) VALUES (?, ?);'
+            sopel.db.execute(q, (remember, response))
+
+
+def setup_remember(sopel):
+    sopel.memory['remember'] = {}
+    q = (
+        'CREATE TABLE IF NOT EXISTS'
+        ' kps_remember(remember TEXT, response TEXT);'
+    )
+    sopel.db.execute(q)
+    q = 'SELECT * FROM kps_remember;'
+    cursor = sopel.db.execute(q)
+    for (remember, response) in cursor.fetchall():
+        add_remember(sopel, remember, response, update_db=False)
+
+
+@require_admin
+@commands('remember', 'r')
+@example('.remember <remember>: <response>')
+def remember(sopel, trigger):
+    """Remember something"""
+    args = trigger.match.group(2)
+    if args and ':' in args:
+        (new_trigger, response) = trigger.match.group(2).strip().split(':', 1)
+        add_remember(sopel, new_trigger.strip(), response.strip())
+        sopel.reply('I will remember that')
+
+
+@require_admin
+@commands('forget', 'f')
+@example('.forget <remember>')
+def forget(sopel, trigger):
+    """Forget something"""
+    if trigger.match.group(2):
+        remember = trigger.match.group(2).strip()
+        response = sopel.memory['remember'].get(remember)
+        if response:
+            del sopel.memory['remember'][remember]
+            q = 'DELETE FROM kps_remember WHERE remember = ?;'
+            sopel.db.execute(q, (remember,))
+            sopel.reply('I will forget that')
+        else:
+            sopel.reply('I don\'t know about that')
+
+
+@require_admin
+@commands('rlist')
+def remember_list(sopel, trigger):
+    """List remembers"""
+    sopel.reply(', '.join(sopel.memory['remember'].keys()))
 
 
 def configure(config):
@@ -61,6 +136,7 @@ def setup(sopel):
     except:
         raise ConfigurationError('Could not authenticate with OGS')
     sopel.memory['ogs_sched'] = scheduler(time.time, time.sleep)
+    setup_remember(sopel)
 
 
 def ogs_get(sopel, url):
