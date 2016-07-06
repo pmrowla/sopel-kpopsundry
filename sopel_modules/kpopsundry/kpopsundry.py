@@ -8,6 +8,8 @@ Author: Peter Rowlands <peter@pmrowla.com>
 
 from __future__ import unicode_literals, absolute_import, division
 
+from datetime import datetime, timedelta
+import random
 import re
 from sched import scheduler
 import time
@@ -54,6 +56,11 @@ def setup_remember(sopel):
 @rule(r'^.*$')
 @priority('low')
 def remember_respond(sopel, trigger):
+    if trigger.time < (datetime.utcnow() - timedelta(seconds=15)):
+        # if message was sent > 15 seconds ago it's probably channel history
+        # replay and we should ignore it
+        return
+    matches = []
     for remember in sopel.memory['remember']:
         regex = r'^(.*\s)?(?P<remember>{})(\s.*)?$'.format(remember)
         if re.match(regex, trigger.match.group(0)):
@@ -65,6 +72,10 @@ def remember_respond(sopel, trigger):
 @example('.remember <remember>: <response>')
 def remember(sopel, trigger):
     """Remember something"""
+    if trigger.time < (datetime.utcnow() - timedelta(seconds=15)):
+        # if message was sent > 15 seconds ago it's probably channel history
+        # replay and we should ignore it
+        return
     args = trigger.match.group(2)
     if args and ':' in args:
         (new_trigger, response) = trigger.match.group(2).strip().split(':', 1)
@@ -77,6 +88,10 @@ def remember(sopel, trigger):
 @example('.forget <remember>')
 def forget(sopel, trigger):
     """Forget something"""
+    if trigger.time < (datetime.utcnow() - timedelta(seconds=15)):
+        # if message was sent > 15 seconds ago it's probably channel history
+        # replay and we should ignore it
+        return
     if trigger.match.group(2):
         remember = trigger.match.group(2).strip()
         response = sopel.memory['remember'].get(remember)
