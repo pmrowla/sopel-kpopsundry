@@ -8,9 +8,14 @@ Author: Peter Rowlands <peter@pmrowla.com>
 
 from __future__ import unicode_literals, absolute_import, division
 
+import re
+from sched import scheduler
+import time
+
 from sopel.module import (
     commands,
     example,
+    priority,
     require_admin,
     rule,
 )
@@ -20,23 +25,10 @@ from oauthlib.oauth2 import LegacyApplicationClient
 from requests_oauthlib import OAuth2Session
 from requests.exceptions import HTTPError
 
-from sched import scheduler
-
-import time
-
-
-def remember_respond(sopel, trigger):
-    remember = trigger.match.group('remember')
-    response = sopel.memory['remember'].get(remember)
-    if response:
-        sopel.say(response)
-
 
 def add_remember(sopel, remember, response, update_db=True):
     old_response = sopel.memory['remember'].get(remember)
     sopel.memory['remember'][remember] = response
-    regex = r'^(.*\s)?(?P<remember>{})(\s.*)?$'.format(remember)
-    rule(regex)(remember_respond)
     if update_db:
         if old_response:
             q = 'UPDATE kps_remember SET response = ? WHERE remember = ?;'
@@ -57,6 +49,15 @@ def setup_remember(sopel):
     cursor = sopel.db.execute(q)
     for (remember, response) in cursor.fetchall():
         add_remember(sopel, remember, response, update_db=False)
+
+
+@rule(r'^.*$')
+@priority('low')
+def remember_respond(sopel, trigger):
+    for remember in sopel.memory['remember']:
+        regex = r'^(.*\s)?(?P<remember>{})(\s.*)?$'.format(remember)
+        if re.match(regex, trigger.match.group(0)):
+            sopel.say(sopel.memory['remember'][remember])
 
 
 @require_admin
