@@ -14,6 +14,9 @@ import re
 from sched import scheduler
 import time
 
+import pytz
+from dateutil.parser import parse
+
 from sopel.module import (
     commands,
     example,
@@ -21,11 +24,20 @@ from sopel.module import (
     require_admin,
     rule,
 )
-from sopel.config import ConfigurationError
+from sopel.config import (
+    ConfigurationError,
+)
+from sopel.config.types import (
+    StaticSection,
+    ValidatedAttribute,
+)
 
 from oauthlib.oauth2 import LegacyApplicationClient
 from requests_oauthlib import OAuth2Session
 from requests.exceptions import HTTPError
+
+
+KR_TZ = pytz.timezone('Asia/Seoul')
 
 
 def add_remember(sopel, remember, response, update_db=True):
@@ -113,6 +125,18 @@ def remember_list(sopel, trigger):
     sopel.reply(', '.join(sopel.memory['remember'].keys()))
 
 
+class KpopsundrySection(StaticSection):
+    ogs_username = ValidatedAttribute('ogs_username')
+    ogs_password = ValidatedAttribute('ogs_password')
+    ogs_client_id = ValidatedAttribute('ogs_client_id')
+    ogs_client_secret = ValidatedAttribute('ogs_client_secret')
+    kps_strim_client_id = ValidatedAttribute('kps_strim_client_id')
+    kps_strim_client_secret = ValidatedAttribute('kps_strim_client_secret')
+    kps_strim_callback_uri = ValidatedAttribute('kps_strim_callback_uri')
+    kps_strim_access_token = ValidatedAttribute('kps_strim_access_token')
+    kps_strim_refresh_token = ValidatedAttribute('kps_strim_refresh_token')
+
+
 def configure(config):
     """
     Load kpopsundry config settings
@@ -125,18 +149,82 @@ def configure(config):
         ogs_client_secret = client_secret
 
     """
+    config.define_section('kpopsundry', KpopsundrySection)
+    config.kpopsundry.configure_setting(
+        'ogs_username',
+        'OGS username'
+    )
+    config.kpopsundry.configure_setting(
+        'ogs_password',
+        'OGS password'
+    )
+    config.kpopsundry.configure_setting(
+        'ogs_client_id',
+        'OGS client ID'
+    )
+    config.kpopsundry.configure_setting(
+        'ogs_client_secret',
+        'OGS client secret'
+    )
+    config.kpopsundry.configure_setting(
+        'kps_strim_client_id',
+        'kps-strim client ID'
+    )
+    config.kpopsundry.configure_setting(
+        'kps_strim_client_secret',
+        'kps-strim client secret'
+    )
+    config.kpopsundry.configure_setting(
+        'kps_strim_callback_uri',
+        'kps-strim client callback_uri'
+    )
+    try:
+        client_id = config.kpopsundry.kps_strim_client_id
+        client_secret = config.kpopsundry.kps_strim_client_secret
+        callback_uri = config.kpopsundry.kps_strim_callback_uri
+        oauth = OAuth2Session(client_id, redirect_uri=callback_uri)
+        auth_url, state = oauth.authorization_url(
+            'https://strim.pmrowla.com/o/authorize'
+        )
+        auth_response = raw_input(
+            'Plese visit {} and then copy/paste the full callback URL '
+            'here: '.format(auth_url)
+        )
+        token = oauth.fetch_token(
+            'https://strim.pmrowla.com/o/token/',
+            authorization_response=auth_response,
+            client_secret=client_secret,
+        )
+        config.kpopsundry.kps_strim_access_token = token['access_token']
+        config.kpopsundry.kps_strim_refresh_token = token['refresh_token']
+        config.save()
+    except Exception as e:
+        raise ConfigurationError(
+            'Could not authenticate with kps-strim: {}', e
+        )
 
-    if config.option('Configure Online Go (OGS)?', False):
-        config.interactive_add('kpopsundry', 'ogs_username', 'Username')
-        config.interactive_add('kpopsundry', 'ogs_password',
-                               'Application-specific password')
-        config.interactive_add('kpopsundry', 'ogs_client_id', 'Client ID')
-        config.interactive_add('kpopsundry', 'ogs_client_secret',
-                               'Client secret')
+
+def kps_strim_get(sopel, url):
+    def save_token(token):
+        sopel.memory['kps_strim']['token'] = token
+
+    client_id = sopel.config.kpopsundry.kps_strim_client_id
+    client_secret = sopel.config.kpopsundry.kps_strim_client_secret
+    extra = {'client_id': client_id, 'client_secret': client_secret}
+    client = OAuth2Session(
+        client_id,
+        token=sopel.memory['kps_strim']['token'],
+        auto_refresh_url='https://strim.pmrowla.com/o/token/',
+        auto_refresh_kwargs=extra,
+        token_updater=save_token)
+    r = client.get(url)
+    r.raise_for_status()
+    return r
 
 
 def setup(sopel):
     """Setup kpopsundry module"""
+    sopel.config.define_section('kpopsundry', KpopsundrySection)
     try:
         ogs_username = sopel.config.kpopsundry.ogs_username
         ogs_password = sopel.config.kpopsundry.ogs_password
@@ -153,6 +241,30 @@ def setup(sopel):
         sopel.memory['ogs_token'] = token
     except:
         raise ConfigurationError('Could not authenticate with OGS')
+    try:
+        access_token = sopel.config.kpopsundry.kps_strim_access_token
+        refresh_token = sopel.config.kpopsundry.kps_strim_refresh_token
+        token = {
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'token_type': 'Bearer',
+            'expires_in': '-1',
+        }
+        sopel.memory['kps_strim'] = {}
+        sopel.memory['kps_strim']['token'] = token
+        r = kps_strim_get(
+            sopel,
+            'https://strim.pmrowla.com/api/v1/channels/?format=json'
+        )
+        channels = []
+        for c in r.json():
+            channels.append(c['slug'])
+        sopel.memory['kps_strim']['channels'] = channels
+    except Exception as e:
+        raise ConfigurationError(
+            'You must reconfigure the kpopsundry module to obtain '
+            'a kps-strim OAuth token: {}'.format(e)
+        )
     sopel.memory['ogs_sched'] = scheduler(time.time, time.sleep)
     setup_remember(sopel)
 
@@ -272,3 +384,21 @@ def get_ogs_game(sopel, trigger):
     sched.enter(5, 1, delayed_say,
                 (sopel, get_ogs_game_api, int(trigger.match.group('id'))))
     sched.run()
+
+
+@commands('strim')
+def strim(sopel, trigger):
+    """Fetch next strim"""
+    strims = kps_strim_get(sopel, 'https://strim.pmrowla.com/api/v1/strims/?format=json').json()
+    for strim in strims[:1]:
+        title = strim.get('title')
+        slug = strim.get('slug')
+        timestamp = parse(strim.get('timestamp'))
+        channel_name = strim.get('channel', {}).get('name')
+        msg = ['{} - {}: {}'.format(
+            timestamp.astimezone(KR_TZ).strftime('%Y-%m-%d %H:%M KST'),
+            channel_name,
+            title
+        )]
+        msg.append('https://strim.pmrowla.com/strims/{}/'.format(slug))
+        sopel.say(' | '.join(msg))
