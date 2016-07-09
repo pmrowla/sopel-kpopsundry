@@ -1,3 +1,4 @@
 sopel>=6.0,<7
 requests_oauthlib==0.6.1
 python-dateutil==2.5.3
+pyshorteners==0.6.0

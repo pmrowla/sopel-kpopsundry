@@ -35,9 +35,22 @@ from sopel.config.types import (
 from oauthlib.oauth2 import LegacyApplicationClient
 from requests_oauthlib import OAuth2Session
 from requests.exceptions import HTTPError
+from pyshorteners import Shortener
 
 
 KR_TZ = pytz.timezone('Asia/Seoul')
+
+
+def short_url(sopel, url):
+    key = sopel.config.kpopsundry.google_api_key
+    if key:
+        googl = Shortener(
+            'Google',
+            api_key=sopel.config.kpopsundry.google_api_key
+        )
+        return googl.short(url)
+    else:
+        return url
 
 
 def add_remember(sopel, remember, response, update_db=True):
@@ -135,6 +148,7 @@ class KpopsundrySection(StaticSection):
     kps_strim_callback_uri = ValidatedAttribute('kps_strim_callback_uri')
     kps_strim_access_token = ValidatedAttribute('kps_strim_access_token')
     kps_strim_refresh_token = ValidatedAttribute('kps_strim_refresh_token')
+    google_api_key = ValidatedAttribute('google_api_key')
 
 
 def configure(config):
@@ -398,10 +412,15 @@ def strim(sopel, trigger):
         title = strim.get('title')
         timestamp = parse(strim.get('timestamp'))
         channel_name = strim.get('channel', {}).get('name')
-        sopel.say('Next strim: {} - {}: {}'.format(
+        slug = strim.get('slug')
+        sopel.say('Next strim: {} - {}: {} | {}'.format(
             timestamp.astimezone(KR_TZ).strftime('%Y-%m-%d %H:%M KST'),
             channel_name,
-            title
+            title,
+            short_url(
+                sopel,
+                'https://strim.pmrowla.com/strims/{}/'.format(slug)
+            )
         ))
     else:
         sopel.say('No scheduled strims')
