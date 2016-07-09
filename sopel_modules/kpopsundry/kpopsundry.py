@@ -200,7 +200,7 @@ def configure(config):
         config.save()
     except Exception as e:
         raise ConfigurationError(
-            'Could not authenticate with kps-strim: {}', e
+            'Could not authenticate with kps-strim: {}'.format(e)
         )
 
 
@@ -389,16 +389,19 @@ def get_ogs_game(sopel, trigger):
 @commands('strim')
 def strim(sopel, trigger):
     """Fetch next strim"""
-    strims = kps_strim_get(sopel, 'https://strim.pmrowla.com/api/v1/strims/?format=json').json()
-    for strim in strims[:1]:
+    strims = kps_strim_get(
+        sopel,
+        'https://strim.pmrowla.com/api/v1/strims/?format=json'
+    ).json()
+    if strims:
+        strim = strims[0]
         title = strim.get('title')
-        slug = strim.get('slug')
         timestamp = parse(strim.get('timestamp'))
         channel_name = strim.get('channel', {}).get('name')
-        msg = ['{} - {}: {}'.format(
+        sopel.say('Next strim: {} - {}: {}'.format(
             timestamp.astimezone(KR_TZ).strftime('%Y-%m-%d %H:%M KST'),
             channel_name,
             title
-        )]
-        msg.append('https://strim.pmrowla.com/strims/{}/'.format(slug))
-        sopel.say(' | '.join(msg))
+        ))
+    else:
+        sopel.say('No scheduled strims')
