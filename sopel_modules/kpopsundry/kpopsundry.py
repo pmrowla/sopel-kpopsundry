@@ -32,7 +32,11 @@ from sopel.config.types import (
     ValidatedAttribute,
 )
 
-from oauthlib.oauth2 import LegacyApplicationClient
+from oauthlib.oauth2 import (
+    LegacyApplicationClient,
+    BackendApplicationClient,
+    TokenExpiredError,
+)
 from requests_oauthlib import OAuth2Session
 from requests.exceptions import HTTPError
 from pyshorteners import Shortener
@@ -146,8 +150,6 @@ class KpopsundrySection(StaticSection):
     kps_strim_client_id = ValidatedAttribute('kps_strim_client_id')
     kps_strim_client_secret = ValidatedAttribute('kps_strim_client_secret')
     kps_strim_callback_uri = ValidatedAttribute('kps_strim_callback_uri')
-    kps_strim_access_token = ValidatedAttribute('kps_strim_access_token')
-    kps_strim_refresh_token = ValidatedAttribute('kps_strim_refresh_token')
     google_api_key = ValidatedAttribute('google_api_key')
 
 
@@ -192,30 +194,6 @@ def configure(config):
         'kps_strim_callback_uri',
         'kps-strim client callback_uri'
     )
-    try:
-        client_id = config.kpopsundry.kps_strim_client_id
-        client_secret = config.kpopsundry.kps_strim_client_secret
-        callback_uri = config.kpopsundry.kps_strim_callback_uri
-        oauth = OAuth2Session(client_id, redirect_uri=callback_uri)
-        auth_url, state = oauth.authorization_url(
-            'https://strim.pmrowla.com/o/authorize'
-        )
-        auth_response = raw_input(
-            'Plese visit {} and then copy/paste the full callback URL '
-            'here: '.format(auth_url)
-        )
-        token = oauth.fetch_token(
-            'https://strim.pmrowla.com/o/token/',
-            authorization_response=auth_response,
-            client_secret=client_secret,
-        )
-        config.kpopsundry.kps_strim_access_token = token['access_token']
-        config.kpopsundry.kps_strim_refresh_token = token['refresh_token']
-        config.save()
-    except Exception as e:
-        raise ConfigurationError(
-            'Could not authenticate with kps-strim: {}'.format(e)
-        )
 
 
 def kps_strim_get(sopel, url):
@@ -223,15 +201,22 @@ def kps_strim_get(sopel, url):
         sopel.memory['kps_strim']['token'] = token
 
     client_id = sopel.config.kpopsundry.kps_strim_client_id
-    client_secret = sopel.config.kpopsundry.kps_strim_client_secret
-    extra = {'client_id': client_id, 'client_secret': client_secret}
-    client = OAuth2Session(
-        client_id,
-        token=sopel.memory['kps_strim']['token'],
-        auto_refresh_url='https://strim.pmrowla.com/o/token/',
-        auto_refresh_kwargs=extra,
-        token_updater=save_token)
-    r = client.get(url)
+    client = BackendApplicationClient(client_id=client_id)
+    oauth = OAuth2Session(
+        client=client,
+        token=sopel.memory['kps_strim']['token']
+    )
+    try:
+        r = oauth.get(url)
+    except TokenExpiredError:
+        client_secret = sopel.config.kpopsundry.kps_strim_client_secret
+        token = oauth.fetch_token(
+            'https://strim.pmrowla.com/o/token/',
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        sopel.memory['kps_strim']['token'] = token
+        r = oauth.get(url)
     r.raise_for_status()
     return r
 
@@ -256,14 +241,15 @@ def setup(sopel):
     except:
         raise ConfigurationError('Could not authenticate with OGS')
     try:
-        access_token = sopel.config.kpopsundry.kps_strim_access_token
-        refresh_token = sopel.config.kpopsundry.kps_strim_refresh_token
-        token = {
-            'access_token': access_token,
-            'refresh_token': refresh_token,
-            'token_type': 'Bearer',
-            'expires_in': '-1',
-        }
+        client_id = sopel.config.kpopsundry.kps_strim_client_id
+        client_secret = sopel.config.kpopsundry.kps_strim_client_secret
+        client = BackendApplicationClient(client_id=client_id)
+        oauth = OAuth2Session(client=client)
+        token = oauth.fetch_token(
+            'https://strim.pmrowla.com/o/token/',
+            client_id=client_id,
+            client_secret=client_secret,
+        )
         sopel.memory['kps_strim'] = {}
         sopel.memory['kps_strim']['token'] = token
         r = kps_strim_get(
