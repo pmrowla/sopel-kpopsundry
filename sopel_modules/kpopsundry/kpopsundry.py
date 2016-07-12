@@ -403,7 +403,7 @@ def format_timedelta(td):
             strs.append('{} hours'.format(hours))
         else:
             strs.append('{} hour'.format(hours))
-    (minutes, seconds) = divmod(td.seconds, 60)
+    (minutes, seconds) = divmod(seconds, 60)
     if minutes:
         if minutes > 1:
             strs.append('{} minutes'.format(minutes))
@@ -425,7 +425,7 @@ def check_live(sopel, notify=True):
     r = requests.get(url, params=params)
     r.raise_for_status()
     root = ET.fromstring(r.text)
-    if root.find('//active'):
+    if root.find('active'):
         if not live and notify:
             for chan in sopel.channels:
                 sopel.say(
@@ -459,7 +459,7 @@ def strim(sopel, trigger):
             timestamp = parse(strim.get('timestamp'))
             channel_name = strim.get('channel', {}).get('name')
             slug = strim.get('slug')
-            td = pytz.utc.localize(datetime.utcnow()) - timestamp
+            td = timestamp - pytz.utc.localize(datetime.utcnow())
             msgs.append('Next strim in {}'.format(
                 format_timedelta(td),
             ))
