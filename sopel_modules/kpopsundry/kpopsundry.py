@@ -122,7 +122,8 @@ def remember(sopel, trigger):
 @example('.forget <remember>')
 def forget(sopel, trigger):
     """Forget something"""
-    if trigger.time < (datetime.utcnow() - timedelta(seconds=15)):
+    if trigger.time < (datetime.utcnow() - timedelta(seconds=15)) \
+       or trigger.nick == sopel.nick:
         # if message was sent > 15 seconds ago it's probably channel history
         # replay and we should ignore it
         return
@@ -425,7 +426,7 @@ def check_live(sopel, notify=True):
     r = requests.get(url, params=params)
     r.raise_for_status()
     root = ET.fromstring(r.text)
-    if root.find('active'):
+    if root.find('.//active'):
         if not live and notify:
             for chan in sopel.channels:
                 sopel.say(
