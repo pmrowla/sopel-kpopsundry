@@ -6,7 +6,12 @@ Kpopsundry sopel module
 Author: Peter Rowlands <peter@pmrowla.com>
 """
 
-from __future__ import unicode_literals, absolute_import, division
+from __future__ import (
+    unicode_literals,
+    absolute_import,
+    division,
+    print_function
+)
 
 from datetime import datetime, timedelta
 import random
@@ -418,8 +423,7 @@ def format_timedelta(td):
     return ', '.join(strs)
 
 
-@interval(60)
-def check_live(sopel, notify=True):
+def _check_live(sopel, notify=True):
     live = sopel.memory['kps_strim']['live']
     url = 'https://secure.pmrowla.com/live'
     params = {'app': 'strim'}
@@ -430,20 +434,25 @@ def check_live(sopel, notify=True):
         if not live and notify:
             for chan in sopel.channels:
                 sopel.say(
-                    chan,
                     'Strim is now live | {}'.format(
-                        short_url(sopel, 'https://strim.pmrowla.com/')
-                    )
+                        short_url(sopel, 'https://strim.pmrowla.com/'),
+                    ),
+                    chan
                 )
         sopel.memory['kps_strim']['live'] = True
     else:
         sopel.memory['kps_strim']['live'] = False
 
 
+@interval(60)
+def check_live(sopel):
+    return _check_live(sopel)
+
+
 @commands('strim')
 def strim(sopel, trigger):
     """Fetch next strim"""
-    check_live(sopel, notify=False)
+    _check_live(sopel, notify=False)
     msgs = []
     if sopel.memory['kps_strim']['live']:
         msgs.append('Strim is live')
