@@ -13,6 +13,7 @@ import random
 import re
 from sched import scheduler
 import time
+import xml.etree.ElementTree as ET
 
 import pytz
 from dateutil.parser import parse
@@ -20,6 +21,7 @@ from dateutil.parser import parse
 from sopel.module import (
     commands,
     example,
+    interval,
     priority,
     require_admin,
     rule,
@@ -39,6 +41,7 @@ from oauthlib.oauth2 import (
 )
 from requests_oauthlib import OAuth2Session
 from requests.exceptions import HTTPError
+import requests
 from pyshorteners import Shortener
 
 
@@ -267,6 +270,7 @@ def setup(sopel):
         )
     sopel.memory['ogs_sched'] = scheduler(time.time, time.sleep)
     setup_remember(sopel)
+    sopel.memory['kps_strim']['live'] = False
 
 
 def ogs_get(sopel, url):
@@ -386,27 +390,91 @@ def get_ogs_game(sopel, trigger):
     sched.run()
 
 
+def format_timedelta(td):
+    strs = []
+    if td.days:
+        if td.days > 1:
+            strs.append('{} days'.format(td.days))
+        else:
+            strs.append('{} day'.format(td.days))
+    (hours, seconds) = divmod(td.seconds, 3600)
+    if hours:
+        if hours > 1:
+            strs.append('{} hours'.format(hours))
+        else:
+            strs.append('{} hour'.format(hours))
+    (minutes, seconds) = divmod(td.seconds, 60)
+    if minutes:
+        if minutes > 1:
+            strs.append('{} minutes'.format(minutes))
+        else:
+            strs.append('{} minute'.format(minutes))
+    if seconds:
+        if seconds > 1:
+            strs.append('{} seconds'.format(seconds))
+        else:
+            strs.append('{} second'.format(seconds))
+    return ', '.join(strs)
+
+
+@interval(60)
+def check_live(sopel, notify=True):
+    live = sopel.memory['kps_strim']['live']
+    url = 'https://secure.pmrowla.com/live'
+    params = {'app': 'strim'}
+    r = requests.get(url, params=params)
+    r.raise_for_status()
+    root = ET.fromstring(r.text)
+    if root.find('//active'):
+        if not live and notify:
+            for chan in sopel.channels:
+                sopel.say(
+                    chan,
+                    'Strim is now live | {}'.format(
+                        short_url(sopel, 'https://strim.pmrowla.com/')
+                    )
+                )
+        sopel.memory['kps_strim']['live'] = True
+    else:
+        sopel.memory['kps_strim']['live'] = False
+
+
 @commands('strim')
 def strim(sopel, trigger):
     """Fetch next strim"""
-    strims = kps_strim_get(
-        sopel,
-        'https://strim.pmrowla.com/api/v1/strims/?format=json'
-    ).json()
-    if strims:
-        strim = strims[0]
-        title = strim.get('title')
-        timestamp = parse(strim.get('timestamp'))
-        channel_name = strim.get('channel', {}).get('name')
-        slug = strim.get('slug')
-        sopel.say('Next strim: {} - {}: {} | {}'.format(
-            timestamp.astimezone(KR_TZ).strftime('%Y-%m-%d %H:%M KST'),
-            channel_name,
-            title,
-            short_url(
-                sopel,
-                'https://strim.pmrowla.com/strims/{}/'.format(slug)
-            )
-        ))
+    check_live(sopel, notify=False)
+    msgs = []
+    if sopel.memory['kps_strim']['live']:
+        msgs.append('Strim is live')
+        msgs.append(short_url(sopel, 'https://strim.pmrowla.com/'))
     else:
-        sopel.say('No scheduled strims')
+        msgs.append('Strim is down')
+        strims = kps_strim_get(
+            sopel,
+            'https://strim.pmrowla.com/api/v1/strims/?format=json'
+        ).json()
+        if strims:
+            strim = strims[0]
+            title = strim.get('title')
+            timestamp = parse(strim.get('timestamp'))
+            channel_name = strim.get('channel', {}).get('name')
+            slug = strim.get('slug')
+            td = pytz.utc.localize(datetime.utcnow()) - timestamp
+            msgs.append('Next strim in {}'.format(
+                format_timedelta(td),
+            ))
+            msgs.append('{} - {}: {}'.format(
+                timestamp.astimezone(KR_TZ).strftime('%Y-%m-%d %H:%M KST'),
+                channel_name,
+                title,
+            ))
+            msgs.append(
+                short_url(
+                    sopel,
+                    'https://strim.pmrowla.com/strims/{}/'.format(slug)
+                )
+            )
+        else:
+            msgs.append('No scheduled strims')
+    if msgs:
+        sopel.say(' | '.join(msgs))
