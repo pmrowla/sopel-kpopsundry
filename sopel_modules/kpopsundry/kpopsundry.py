@@ -426,7 +426,7 @@ def check_live(sopel, notify=True):
     r = requests.get(url, params=params)
     r.raise_for_status()
     root = ET.fromstring(r.text)
-    if root.find('.//active'):
+    if root.find('.//active') is not None:
         if not live and notify:
             for chan in sopel.channels:
                 sopel.say(
