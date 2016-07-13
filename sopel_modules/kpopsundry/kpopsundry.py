@@ -450,12 +450,12 @@ def strim(sopel, trigger):
         msgs.append(short_url(sopel, 'https://strim.pmrowla.com/'))
     else:
         msgs.append('Strim is down')
-        strims = kps_strim_get(
+        data = kps_strim_get(
             sopel,
             'https://strim.pmrowla.com/api/v1/strims/?format=json'
         ).json()
-        if strims:
-            strim = strims[0]
+        if data['count']:
+            strim = data['results'][0]
             title = strim.get('title')
             timestamp = parse(strim.get('timestamp'))
             channel_name = strim.get('channel', {}).get('name')
