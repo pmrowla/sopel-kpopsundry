@@ -265,8 +265,9 @@ def setup(sopel):
             sopel,
             'https://strim.pmrowla.com/api/v1/channels/?format=json'
         )
+        data = r.json()
         channels = []
-        for c in r.json():
+        for c in data['results']:
             channels.append(c['slug'])
         sopel.memory['kps_strim']['channels'] = channels
     except Exception as e:
