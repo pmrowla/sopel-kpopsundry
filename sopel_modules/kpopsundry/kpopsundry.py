@@ -385,25 +385,59 @@ def format_timedelta(td):
     return ', '.join(strs)
 
 
+def _next_strim(sopel):
+    msgs = []
+    data = kps_strim_get(
+        sopel,
+        'https://strim.pmrowla.com/api/v1/strims/?format=json'
+    ).json()
+    if data['count']:
+        strim = data['results'][0]
+        title = strim.get('title')
+        timestamp = parse(strim.get('timestamp'))
+        channel_name = strim.get('channel', {}).get('name')
+        slug = strim.get('slug')
+        td = timestamp - pytz.utc.localize(datetime.utcnow())
+        msgs.append('Next strim in {}'.format(
+            format_timedelta(td),
+        ))
+        msgs.append('{} - {}: {}'.format(
+            timestamp.astimezone(KR_TZ).strftime('%Y-%m-%d %H:%M KST'),
+            channel_name,
+            title,
+        ))
+        msgs.append(
+            short_url(
+                sopel,
+                'https://strim.pmrowla.com/strims/{}/'.format(slug)
+            )
+        )
+    else:
+        msgs.append('No scheduled strims')
+    return msgs
+
+
 def _check_live(sopel, notify=True):
     live = sopel.memory['kps_strim']['live']
     url = 'https://secure.pmrowla.com/live'
     params = {'app': 'strim'}
     r = requests.get(url, params=params)
     r.raise_for_status()
+    msgs = []
     root = ET.fromstring(r.text)
     if root.find('.//active') is not None:
         if not live and notify:
-            for chan in sopel.channels:
-                sopel.say(
-                    'Strim is now live | {}'.format(
-                        short_url(sopel, 'https://strim.pmrowla.com/'),
-                    ),
-                    chan
-                )
+            msgs.append('Strim is now live')
+            msgs.append(short_url(sopel, 'https://strim.pmrowla.com/'))
         sopel.memory['kps_strim']['live'] = True
     else:
+        if live and notify:
+            msgs.append('Strim finished')
+            msgs.extend(_next_strim(sopel))
         sopel.memory['kps_strim']['live'] = False
+    if msgs:
+        for chan in sopel.channels:
+            sopel.say(' | '.join(msgs), chan)
 
 
 @interval(60)
@@ -421,33 +455,7 @@ def strim(sopel, trigger):
         msgs.append(short_url(sopel, 'https://strim.pmrowla.com/'))
     else:
         msgs.append('Strim is down')
-        data = kps_strim_get(
-            sopel,
-            'https://strim.pmrowla.com/api/v1/strims/?format=json'
-        ).json()
-        if data['count']:
-            strim = data['results'][0]
-            title = strim.get('title')
-            timestamp = parse(strim.get('timestamp'))
-            channel_name = strim.get('channel', {}).get('name')
-            slug = strim.get('slug')
-            td = timestamp - pytz.utc.localize(datetime.utcnow())
-            msgs.append('Next strim in {}'.format(
-                format_timedelta(td),
-            ))
-            msgs.append('{} - {}: {}'.format(
-                timestamp.astimezone(KR_TZ).strftime('%Y-%m-%d %H:%M KST'),
-                channel_name,
-                title,
-            ))
-            msgs.append(
-                short_url(
-                    sopel,
-                    'https://strim.pmrowla.com/strims/{}/'.format(slug)
-                )
-            )
-        else:
-            msgs.append('No scheduled strims')
+        msgs.extend(_next_strim(sopel))
     if msgs:
         sopel.say(' | '.join(msgs))
 
