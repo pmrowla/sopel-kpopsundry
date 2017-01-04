@@ -101,7 +101,7 @@ def remember_respond(sopel, trigger):
     matches = []
     for remember in sopel.memory['remember']:
         regex = r'^(.*\s)?(?P<remember>{})(\s.*)?$'.format(remember)
-        if re.match(regex, trigger.match.group(0)):
+        if re.match(regex, trigger.match.group(0), re.I):
             matches.append(remember)
     if matches:
         sopel.say(sopel.memory['remember'][random.choice(matches)])
