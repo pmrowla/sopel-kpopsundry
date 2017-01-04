@@ -1,5 +1,5 @@
-ollehtv==0.1.1
-python-dateutil==2.5.3
-pyshorteners==0.6.0
-requests_oauthlib==0.6.1
+ollehtv>=0.1.1
+python-dateutil
+pyshorteners
+requests_oauthlib>=0.6.1
 sopel>=6.0,<7

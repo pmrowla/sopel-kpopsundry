@@ -630,7 +630,7 @@ def tvadd(sopel, trigger):
     if args:
         try:
             (shortname, station, weekday, name) = \
-                args.strip().split(maxsplit=3)
+                args.strip().split(' ', 3)
         except ValueError:
             sopel.reply('Usage: .tvadd <shortname> <station> <weekday> <name>')
             return
