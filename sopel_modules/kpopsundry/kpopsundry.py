@@ -20,6 +20,7 @@ from sched import scheduler
 import time
 import xml.etree.ElementTree as ET
 
+from ollehtv import OllehTV
 import pytz
 from dateutil.parser import parse
 
@@ -160,6 +161,8 @@ class KpopsundrySection(StaticSection):
     kps_strim_client_secret = ValidatedAttribute('kps_strim_client_secret')
     kps_strim_callback_uri = ValidatedAttribute('kps_strim_callback_uri')
     google_api_key = ValidatedAttribute('google_api_key')
+    ollehtv_device_id = ValidatedAttribute('ollehtv_device_id')
+    ollehtv_svc_pw = ValidatedAttribute('ollehtv_svc_pw')
 
 
 def configure(config):
@@ -203,6 +206,14 @@ def configure(config):
         'kps_strim_callback_uri',
         'kps-strim client callback_uri'
     )
+    config.kpopsundry.configure_setting(
+        'ollehtv_device_id',
+        'OllehTV DEVICE_ID',
+    )
+    config.kpopsundry.configure_setting(
+        'ollehtv_svc_pw',
+        'OllehTV SVC_PW',
+    )
 
 
 def kps_strim_get(sopel, url):
@@ -228,56 +239,6 @@ def kps_strim_get(sopel, url):
         r = oauth.get(url)
     r.raise_for_status()
     return r
-
-
-def setup(sopel):
-    """Setup kpopsundry module"""
-    sopel.config.define_section('kpopsundry', KpopsundrySection)
-    try:
-        ogs_username = sopel.config.kpopsundry.ogs_username
-        ogs_password = sopel.config.kpopsundry.ogs_password
-        ogs_client_id = sopel.config.kpopsundry.ogs_client_id
-        ogs_client_secret = sopel.config.kpopsundry.ogs_client_secret
-        oauth = OAuth2Session(
-            client=LegacyApplicationClient(client_id=ogs_client_id))
-        token = oauth.fetch_token(
-            token_url='https://online-go.com/oauth2/access_token',
-            username=ogs_username,
-            password=ogs_password,
-            client_id=ogs_client_id,
-            client_secret=ogs_client_secret)
-        sopel.memory['ogs_token'] = token
-    except:
-        raise ConfigurationError('Could not authenticate with OGS')
-    try:
-        client_id = sopel.config.kpopsundry.kps_strim_client_id
-        client_secret = sopel.config.kpopsundry.kps_strim_client_secret
-        client = BackendApplicationClient(client_id=client_id)
-        oauth = OAuth2Session(client=client)
-        token = oauth.fetch_token(
-            'https://strim.pmrowla.com/o/token/',
-            client_id=client_id,
-            client_secret=client_secret,
-        )
-        sopel.memory['kps_strim'] = {}
-        sopel.memory['kps_strim']['token'] = token
-        r = kps_strim_get(
-            sopel,
-            'https://strim.pmrowla.com/api/v1/channels/?format=json'
-        )
-        data = r.json()
-        channels = []
-        for c in data['results']:
-            channels.append(c['slug'])
-        sopel.memory['kps_strim']['channels'] = channels
-    except Exception as e:
-        raise ConfigurationError(
-            'You must reconfigure the kpopsundry module to obtain '
-            'a kps-strim OAuth token: {}'.format(e)
-        )
-    sopel.memory['ogs_sched'] = scheduler(time.time, time.sleep)
-    setup_remember(sopel)
-    sopel.memory['kps_strim']['live'] = False
 
 
 def ogs_get(sopel, url):
@@ -489,3 +450,291 @@ def strim(sopel, trigger):
             msgs.append('No scheduled strims')
     if msgs:
         sopel.say(' | '.join(msgs))
+
+
+class TVStation(object):
+
+    def __init__(self, name, channel_num):
+        self.name = name
+        self.channel_num = channel_num
+
+
+class TVShow(object):
+
+    def __init__(self, name, station, weekday):
+        self.name = name
+        self.station = station
+        self.weekday = weekday
+
+
+DEFAULT_STATIONS = {
+    'mbc-every1': TVStation('MBC Every1', 1),
+    'sbs': TVStation('SBS', 5),
+    'kbs2': TVStation('KBS2', 7),
+    'kbs1': TVStation('KBS1', 9),
+    'mbc': TVStation('MBC', 11),
+    'jtbc': TVStation('JTBC', 15),
+    'tvn': TVStation('tvn', 17),
+    'mnet': TVStation('Mnet', 27),
+    'sbs-fune': TVStation('SBS FunE', 43),
+    'mbc-music': TVStation('MBC Music', 97),
+    'arirang-tv': TVStation('Arirang TV', 206),
+}
+
+
+DEFAULT_SHOWS = {
+    'theshow': TVShow('더쇼', 'sbs-fune', 1),
+    'weekly': TVShow('주간 아이돌', 'mbc-every1', 2),
+    'showchamp': TVShow('쇼 챔피언', 'mbc-every1', 2),
+    'mka': TVShow('M COUNTDOWN', 'mnet', 3),
+    'mubank': TVShow('뮤직뱅크', 'kbs2', 4),
+    'mucore': TVShow('쇼! 음악종심', 'mbc', 5),
+    'inki': TVShow('인기가요', 'sbs', 6),
+}
+
+
+def add_tv_station(sopel, shortname, name, channel_num, update_db=True):
+    old_station = sopel.memory['tv_stations'].get(shortname)
+    sopel.memory['tv_stations'][shortname] = TVStation(name, channel_num)
+    if update_db:
+        if old_station:
+            q = ('UPDATE kps_tv_station SET name = ?, channel_num = ?'
+                 ' WHERE shortname = ?;')
+            sopel.db.execute(q, (name, channel_num, shortname))
+        else:
+            q = ('INSERT INTO kps_tv_station (shortname, name, channel_num)'
+                 ' VALUES (?, ?, ?);')
+            sopel.db.execute(q, (shortname, name, channel_num))
+
+
+def add_tv_show(sopel, shortname, name, station, weekday, update_db=True):
+    if station not in sopel.memory['tv_stations']:
+        return None
+    old_show = sopel.memory['tv_shows'].get(shortname)
+    show = TVShow(name, station, weekday)
+    sopel.memory['tv_shows'][shortname] = show
+    if update_db:
+        if old_show:
+            q = ('UPDATE kps_tv_show SET name = ?, station = ?, weekday = ?'
+                 ' WHERE shortname = ?;')
+            sopel.db.execute(q, (name, station, weekday, shortname))
+        else:
+            q = ('INSERT INTO kps_tv_show (shortname, name, station, weekday)'
+                 ' VALUES (?, ?, ?, ?);')
+            sopel.db.execute(q, (shortname, name, station, weekday))
+    return show
+
+
+def setup_tv(sopel):
+    sopel.memory['tv_stations'] = {}
+    q = (
+        'CREATE TABLE IF NOT EXISTS'
+        ' kps_tv_station(shortname TEXT, name TEXT, channel_num INTEGER);'
+    )
+    sopel.db.execute(q)
+    q = 'SELECT * FROM kps_tv_station;'
+    cursor = sopel.db.execute(q)
+    for (shortname, name, channel_num) in cursor.fetchall():
+        add_tv_station(sopel, shortname, name, channel_num, update_db=False)
+    for k, v in DEFAULT_STATIONS.items():
+        if k not in sopel.memory['tv_stations']:
+            add_tv_station(sopel, k, v.name, v.channel_num)
+    sopel.memory['tv_shows'] = {}
+    q = (
+        'CREATE TABLE IF NOT EXISTS'
+        ' kps_tv_show(shortname TEXT, name TEXT, station TEXT,'
+        ' weekday INTEGER);'
+    )
+    sopel.db.execute(q)
+    q = 'SELECT * FROM kps_tv_show;'
+    cursor = sopel.db.execute(q)
+    for (shortname, name, station, weekday) in cursor.fetchall():
+        add_tv_show(sopel, shortname, name, station, weekday,
+                    update_db=False)
+    for k, v in DEFAULT_SHOWS.items():
+        if k not in sopel.memory['tv_shows']:
+            add_tv_show(sopel, k, v.name, v.station, v.weekday)
+
+
+def _match_live_show(sopel, show, search_prgm):
+    show_channel = sopel.memory['tv_stations'][show.station].channel_num
+    prgm_chnl = int(search_prgm.get('CHNL_NO', -1))
+    prgm_nm = search_prgm.get('PRGM_NM', '')
+    regex = r'{}(\(\d+회\))?'.format(show.name)
+    if prgm_chnl == show_channel and re.match(regex, prgm_nm) \
+            and '(재)' not in prgm_nm:
+        return True
+    return False
+
+
+@commands('tvguide', 'tv')
+def tvguide(sopel, trigger):
+    """List upcoming TV programs"""
+    today = pytz.utc.localize(datetime.utcnow()).astimezone(KR_TZ).weekday()
+    tmrw = (today + 1) % 7
+    otv = sopel.memory['otv']
+    programs = []
+    for k, v in sopel.memory['tv_shows'].items():
+        if v.weekday == today or v.weekday == tmrw:
+            results = otv.search(v.name)
+            if int(results.get('SRCH_EPG_CNT', 0)) > 0:
+                for program in results['SRCH_EPG_LIST']:
+                    if _match_live_show(sopel, v, program):
+                        programs.append(program)
+    if not programs:
+        sopel.reply('Nothing on air today or tomorrow')
+    for program in programs:
+        msg = '[{}-{} KST] {}: {}'.format(
+            program['BROAD_DATE_TM'],
+            program['FIN_TM'],
+            program['CHNL_NM'],
+            program['PRGM_NM'],
+        )
+        sopel.reply(msg)
+
+
+@commands('tvlist', 'tvl')
+def tvlist(sopel, trigger):
+    """List known TV programs"""
+    if sopel.memory['tv_shows']:
+        msg = 'Aired programs: {}'.format(
+            ' '.join(sopel.memory['tv_shows'].keys()))
+        sopel.reply(msg)
+    else:
+        sopel.reply('None')
+
+
+@commands('tvstations')
+def tvstations(sopel, trigger):
+    """List known TV stations"""
+    if sopel.memory['tv_stations']:
+        sopel.reply(' '.join(sopel.memory['tv_stations'].keys()))
+    else:
+        sopel.reply('None')
+
+
+@require_admin
+@commands('tvadd')
+@example('.tvadd <shortname> <station> <weekday> <name>')
+def tvadd(sopel, trigger):
+    """Add a TV program"""
+    args = trigger.match.group(2)
+    if args:
+        try:
+            (shortname, station, weekday, name) = \
+                args.strip().split(maxsplit=3)
+        except ValueError:
+            sopel.reply('Usage: .tvadd <shortname> <station> <weekday> <name>')
+            return
+        if station not in sopel.memory['tv_stations']:
+            sopel.reply('Unknown TV station: {}'.format(station))
+            return
+        add_tv_show(sopel, shortname, name, station, weekday)
+        sopel.reply('Added {}'.format(shortname))
+    else:
+        sopel.reply('Usage: .tvadd <shortname> <station> <weekday> <name>')
+
+
+@require_admin
+@commands('tvdel')
+@example('.tvdel <shortname>')
+def tvdel(sopel, trigger):
+    """Delete a TV program"""
+    args = trigger.match.group(2)
+    if args:
+        shortname = args.strip()
+        if shortname not in sopel.memory['tv_shows']:
+            sopel.reply('Unknown TV show: {}'.format(shortname))
+            return
+        del sopel.memory['tv_shows'][shortname]
+        q = 'DELETE FROM kps_tv_show WHERE shortname = ?;'
+        sopel.db.execute(q, (shortname,))
+        sopel.reply('Removed {}'.format(shortname))
+    else:
+        sopel.reply('Usage: .tvdel <shortname>')
+
+
+@commands('tvdetails')
+@example('.tvdetails <shortname>')
+def tvdetails(sopel, trigger):
+    """List specifics for TV program"""
+    args = trigger.match.group(2)
+    if args:
+        shortname = args.strip()
+        if shortname not in sopel.memory['tv_shows']:
+            sopel.reply('Unknown TV show: {}'.format(shortname))
+            return
+        show = sopel.memory['tv_shows'][shortname]
+        weekday = [
+            'Monday',
+            'Tuesday',
+            'Wednesday',
+            'Thursday',
+            'Friday',
+            'Saturday',
+            'Sunday'
+        ][show.weekday]
+        station = sopel.memory['tv_stations'][show.station]
+        msg = '{} {}: Airs {}s KST'.format(station.name, show.name, weekday)
+        sopel.reply(msg)
+    else:
+        sopel.reply('Usage: .tvdetails <shortname>')
+
+
+def setup(sopel):
+    """Setup kpopsundry module"""
+    sopel.config.define_section('kpopsundry', KpopsundrySection)
+    try:
+        ogs_username = sopel.config.kpopsundry.ogs_username
+        ogs_password = sopel.config.kpopsundry.ogs_password
+        ogs_client_id = sopel.config.kpopsundry.ogs_client_id
+        ogs_client_secret = sopel.config.kpopsundry.ogs_client_secret
+        oauth = OAuth2Session(
+            client=LegacyApplicationClient(client_id=ogs_client_id))
+        token = oauth.fetch_token(
+            token_url='https://online-go.com/oauth2/access_token',
+            username=ogs_username,
+            password=ogs_password,
+            client_id=ogs_client_id,
+            client_secret=ogs_client_secret)
+        sopel.memory['ogs_token'] = token
+    except:
+        raise ConfigurationError('Could not authenticate with OGS')
+    try:
+        client_id = sopel.config.kpopsundry.kps_strim_client_id
+        client_secret = sopel.config.kpopsundry.kps_strim_client_secret
+        client = BackendApplicationClient(client_id=client_id)
+        oauth = OAuth2Session(client=client)
+        token = oauth.fetch_token(
+            'https://strim.pmrowla.com/o/token/',
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        sopel.memory['kps_strim'] = {}
+        sopel.memory['kps_strim']['token'] = token
+        r = kps_strim_get(
+            sopel,
+            'https://strim.pmrowla.com/api/v1/channels/?format=json'
+        )
+        data = r.json()
+        channels = []
+        for c in data['results']:
+            channels.append(c['slug'])
+        sopel.memory['kps_strim']['channels'] = channels
+    except Exception as e:
+        raise ConfigurationError(
+            'You must reconfigure the kpopsundry module to obtain '
+            'a kps-strim OAuth token: {}'.format(e)
+        )
+    sopel.memory['ogs_sched'] = scheduler(time.time, time.sleep)
+    setup_remember(sopel)
+    sopel.memory['kps_strim']['live'] = False
+    try:
+        device_id = sopel.config.kpopsundry.ollehtv_device_id
+        svc_pw = sopel.config.kpopsundry.ollehtv_svc_pw
+        otv = OllehTV(device_id, svc_pw)
+        otv.validate()
+        sopel.memory['otv'] = otv
+    except Exception as e:
+        raise ConfigurationError('Invalid OllehTV credentials: {}'.format(e))
+    setup_tv(sopel)
