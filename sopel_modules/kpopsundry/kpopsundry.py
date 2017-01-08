@@ -496,8 +496,8 @@ DEFAULT_SHOWS = {
     'showchamp': TVShow('쇼 챔피언', 'mbc-every1', 2),
     'mka': TVShow('M COUNTDOWN', 'mnet', 3),
     'mubank': TVShow('뮤직뱅크', 'kbs2', 4),
-    'mucore': TVShow('쇼! 음악종심', 'mbc', 5),
-    'inki': TVShow('인기가요', 'sbs', 6),
+    'mucore': TVShow('쇼! 음악중심', 'mbc', 5),
+    'inki': TVShow('SBS 인기가요', 'sbs', 6),
 }
 
 
@@ -568,7 +568,7 @@ def _match_live_show(sopel, show, search_prgm):
     show_channel = sopel.memory['tv_stations'][show.station].channel_num
     prgm_chnl = int(search_prgm.get('CHNL_NO', -1))
     prgm_nm = search_prgm.get('PRGM_NM', '')
-    regex = r'{}(\(\d+회\))?'.format(show.name)
+    regex = r'{}(\s+\d+부)?(\s?\(\d+회\))?'.format(show.name)
     if prgm_chnl == show_channel and re.match(regex, prgm_nm) \
             and '(재)' not in prgm_nm:
         return True
@@ -637,7 +637,7 @@ def tvadd(sopel, trigger):
         if station not in sopel.memory['tv_stations']:
             sopel.reply('Unknown TV station: {}'.format(station))
             return
-        add_tv_show(sopel, shortname, name, station, weekday)
+        add_tv_show(sopel, shortname, name, station, int(weekday))
         sopel.reply('Added {}'.format(shortname))
     else:
         sopel.reply('Usage: .tvadd <shortname> <station> <weekday> <name>')
