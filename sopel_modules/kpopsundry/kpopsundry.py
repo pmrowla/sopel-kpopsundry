@@ -216,27 +216,44 @@ def configure(config):
     )
 
 
-def kps_strim_get(sopel, url):
-    def save_token(token):
-        sopel.memory['kps_strim']['token'] = token
-
+def _kps_oauth(sopel):
     client_id = sopel.config.kpopsundry.kps_strim_client_id
     client = BackendApplicationClient(client_id=client_id)
-    oauth = OAuth2Session(
+    return OAuth2Session(
         client=client,
         token=sopel.memory['kps_strim']['token']
     )
+
+
+def _kps_expired_token(sopel, oauth):
+    client_id = sopel.config.kpopsundry.kps_strim_client_id
+    client_secret = sopel.config.kpopsundry.kps_strim_client_secret
+    token = oauth.fetch_token(
+        'https://strim.pmrowla.com/o/token/',
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    sopel.memory['kps_strim']['token'] = token
+
+
+def kps_strim_get(sopel, url):
+    oauth = _kps_oauth(sopel)
     try:
         r = oauth.get(url)
     except TokenExpiredError:
-        client_secret = sopel.config.kpopsundry.kps_strim_client_secret
-        token = oauth.fetch_token(
-            'https://strim.pmrowla.com/o/token/',
-            client_id=client_id,
-            client_secret=client_secret,
-        )
-        sopel.memory['kps_strim']['token'] = token
+        _kps_expired_token(sopel, oauth)
         r = oauth.get(url)
+    r.raise_for_status()
+    return r
+
+
+def kps_strim_put(sopel, url, data):
+    oauth = _kps_oauth(sopel)
+    try:
+        r = oauth.put(url)
+    except TokenExpiredError:
+        _kps_expired_token(sopel, oauth)
+        r = oauth.put(url, data)
     r.raise_for_status()
     return r
 
@@ -554,6 +571,14 @@ def setup_tv(sopel):
     for k, v in DEFAULT_STATIONS.items():
         if k not in sopel.memory['tv_stations']:
             add_tv_station(sopel, k, v.name, v.channel_num)
+    r = kps_strim_get(
+        sopel,
+        'https://strim.pmrowla.com/api/v1/channels/?format=json'
+    )
+    data = r.json()
+    for c in data['results']:
+        if c['slug'] not in sopel.memory['tv_stations']:
+            add_tv_station(sopel, c['slug'], c['name'], c['num'])
     sopel.memory['tv_shows'] = {}
     q = (
         'CREATE TABLE IF NOT EXISTS'
@@ -582,9 +607,56 @@ def _match_live_show(sopel, show, search_prgm):
     return False
 
 
-@commands('tvguide', 'tv')
-def tvguide(sopel, trigger):
-    """List upcoming TV programs"""
+def schedule_program_strim(sopel, strim_slug, program):
+    title = program.get('PRGM_NM', 'Untitled strim')
+    description = ''
+    start_time = KR_TZ.localize(
+        datetime.strptime(program.get('BROAD_DATE_TM'), '%Y.%m.%d %H:%M')
+    )
+    tmp_time = datetime.strptime(program.get('BROAD_FIN_TM', '%H:%M'))
+    fin_time = start_time
+    fin_time.hour = tmp_time.hour
+    fin_time.minute = tmp_time.minute
+    if fin_time < start_time:
+        # day rolled over
+        fin_time = fin_time + timedelta(days=1)
+    duration = fin_time - start_time
+    channel_slug = ''
+    for slug, c in sopel.memory['tv_stations'].items():
+        if c.channel_num == int(program.get('CHNL_NO', -1)):
+            channel_slug = slug
+            break
+    if not channel_slug:
+        # TODO: maybe add channel
+        return
+    strim_data = {
+        'channel': channel_slug,
+        'title': title,
+        'slug': '{}-{}'.format(strim_slug, start_time.strftime('%Y%m%d-%H%M')),
+        'description': description,
+        'timestamp': start_time.isoformat(),
+        'duration': str(duration),
+    }
+    try:
+        kps_strim_get(
+            sopel,
+            'https://strim.pmrowla.com/api/v1/strims/{}/?format=json'.format(
+                strim_data['slug']
+            )
+        )
+    except HTTPError as e:
+        if e.response.status_code == 404:
+            # if this strim is not scheduled then add it
+            kps_strim_put(
+                sopel,
+                'https://strim.pmrowla.com/api/v1/strims/',
+                strim_data
+            )
+        else:
+            raise e
+
+
+def fetch_upcoming_tv(sopel):
     today = pytz.utc.localize(datetime.utcnow()).astimezone(KR_TZ).weekday()
     tmrw = (today + 1) % 7
     otv = sopel.memory['otv']
@@ -596,6 +668,14 @@ def tvguide(sopel, trigger):
                 for program in results['SRCH_EPG_LIST']:
                     if _match_live_show(sopel, v, program):
                         programs.append(program)
+                        schedule_program_strim(sopel, k, program)
+    return programs
+
+
+@commands('tvguide', 'tv')
+def tvguide(sopel, trigger):
+    """List upcoming TV programs"""
+    programs = fetch_upcoming_tv(sopel)
     if not programs:
         sopel.reply('Nothing on air today or tomorrow')
     for program in programs:
@@ -727,15 +807,6 @@ def setup(sopel):
         )
         sopel.memory['kps_strim'] = {}
         sopel.memory['kps_strim']['token'] = token
-        r = kps_strim_get(
-            sopel,
-            'https://strim.pmrowla.com/api/v1/channels/?format=json'
-        )
-        data = r.json()
-        channels = []
-        for c in data['results']:
-            channels.append(c['slug'])
-        sopel.memory['kps_strim']['channels'] = channels
     except Exception as e:
         raise ConfigurationError(
             'You must reconfigure the kpopsundry module to obtain '
