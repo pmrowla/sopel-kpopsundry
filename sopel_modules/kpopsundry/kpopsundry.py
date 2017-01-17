@@ -247,13 +247,24 @@ def kps_strim_get(sopel, url):
     return r
 
 
+def kps_strim_post(sopel, url, data=None):
+    oauth = _kps_oauth(sopel)
+    try:
+        r = oauth.post(url, json=data)
+    except TokenExpiredError:
+        _kps_expired_token(sopel, oauth)
+        r = oauth.post(url, json=data)
+    r.raise_for_status()
+    return r
+
+
 def kps_strim_put(sopel, url, data):
     oauth = _kps_oauth(sopel)
     try:
-        r = oauth.put(url)
+        r = oauth.put(url, json=data)
     except TokenExpiredError:
         _kps_expired_token(sopel, oauth)
-        r = oauth.put(url, data)
+        r = oauth.put(url, json=data)
     r.raise_for_status()
     return r
 
@@ -613,10 +624,8 @@ def schedule_program_strim(sopel, strim_slug, program):
     start_time = KR_TZ.localize(
         datetime.strptime(program.get('BROAD_DATE_TM'), '%Y.%m.%d %H:%M')
     )
-    tmp_time = datetime.strptime(program.get('BROAD_FIN_TM', '%H:%M'))
-    fin_time = start_time
-    fin_time.hour = tmp_time.hour
-    fin_time.minute = tmp_time.minute
+    tmp_time = datetime.strptime(program.get('FIN_TM'), '%H:%M')
+    fin_time = start_time.replace(hour=tmp_time.hour, minute=tmp_time.minute)
     if fin_time < start_time:
         # day rolled over
         fin_time = fin_time + timedelta(days=1)
@@ -637,6 +646,7 @@ def schedule_program_strim(sopel, strim_slug, program):
         'timestamp': start_time.isoformat(),
         'duration': str(duration),
     }
+    exists = True
     try:
         kps_strim_get(
             sopel,
@@ -647,13 +657,18 @@ def schedule_program_strim(sopel, strim_slug, program):
     except HTTPError as e:
         if e.response.status_code == 404:
             # if this strim is not scheduled then add it
-            kps_strim_put(
+            exists = False
+        else:
+            raise e
+    try:
+        if not exists:
+            kps_strim_post(
                 sopel,
                 'https://strim.pmrowla.com/api/v1/strims/',
                 strim_data
             )
-        else:
-            raise e
+    except HTTPError as e:
+        raise e
 
 
 def fetch_upcoming_tv(sopel):
