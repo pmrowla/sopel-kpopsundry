@@ -480,6 +480,11 @@ def check_live(sopel):
     return _check_live(sopel)
 
 
+@interval(3600 * 12)
+def auto_schedule_strims(sopel):
+    fetch_upcoming_tv(sopel)
+
+
 @commands('strim')
 def strim(sopel, trigger):
     """Fetch next strim"""
@@ -646,6 +651,7 @@ def schedule_program_strim(sopel, strim_slug, program):
         'timestamp': start_time.isoformat(),
         'duration': str(duration),
     }
+    msgs = []
     exists = True
     try:
         kps_strim_get(
@@ -659,7 +665,7 @@ def schedule_program_strim(sopel, strim_slug, program):
             # if this strim is not scheduled then add it
             exists = False
         else:
-            raise e
+            msgs.append(str(e))
     try:
         if not exists:
             kps_strim_post(
@@ -668,7 +674,8 @@ def schedule_program_strim(sopel, strim_slug, program):
                 strim_data
             )
     except HTTPError as e:
-        raise e
+        msgs.append(str(e))
+    return msgs
 
 
 def fetch_upcoming_tv(sopel):
