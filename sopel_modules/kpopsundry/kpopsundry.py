@@ -395,7 +395,14 @@ def _next_strim(sopel):
         strim = data['results'][0]
         title = strim.get('title')
         timestamp = parse(strim.get('timestamp'))
-        channel_name = strim.get('channel', {}).get('name')
+        channel_slug = strim.get('channel')
+        channel_data = kps_strim_get(
+            sopel,
+            'https://strim.pmrowla.com/api/v1/channels/{}/?format=json'.format(
+                channel_slug
+            )
+        ).json()
+        channel_name = channel_data.get('name')
         slug = strim.get('slug')
         td = timestamp - pytz.utc.localize(datetime.utcnow())
         msgs.append('Next strim in {}'.format(
