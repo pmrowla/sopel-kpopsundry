@@ -29,6 +29,7 @@ from sopel.module import (
     example,
     interval,
     priority,
+    rate,
     require_admin,
     rule,
 )
@@ -92,6 +93,7 @@ def setup_remember(sopel):
 
 
 @rule(r'^.*$')
+@rate(channel=30)
 @priority('low')
 def remember_respond(sopel, trigger):
     if trigger.time < (datetime.utcnow() - timedelta(seconds=15)):
