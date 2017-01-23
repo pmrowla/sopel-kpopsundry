@@ -29,7 +29,6 @@ from sopel.module import (
     example,
     interval,
     priority,
-    rate,
     require_admin,
     rule,
 )
@@ -93,12 +92,10 @@ def setup_remember(sopel):
 
 
 @rule(r'^.*$')
-@rate(channel=30)
 @priority('low')
 def remember_respond(sopel, trigger):
-    if trigger.time < (datetime.utcnow() - timedelta(seconds=15)):
-        # if message was sent > 15 seconds ago it's probably channel history
-        # replay and we should ignore it
+    if sopel.memory.contains('last_remember') and \
+       (trigger.time - sopel.memory['last_remember']) < timedelta(seconds=30):
         return
     matches = []
     for remember in sopel.memory['remember']:
@@ -106,6 +103,7 @@ def remember_respond(sopel, trigger):
         if re.match(regex, trigger.match.group(0), re.I):
             matches.append(remember)
     if matches:
+        sopel.memory['last_remember'] = trigger.time
         sopel.say(sopel.memory['remember'][random.choice(matches)])
 
 
