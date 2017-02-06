@@ -617,7 +617,7 @@ def _match_live_show(sopel, show, search_prgm):
     prgm_chnl = int(search_prgm.get('CHNL_NO', -1))
     prgm_nm = search_prgm.get('PRGM_NM', '')
     regex = r'{}(\s+\d+부)?(\s?\(\d+회\))?'.format(show.name)
-    if prgm_chnl == show_channel and re.match(regex, prgm_nm) \
+    if prgm_chnl == show_channel and re.search(regex, prgm_nm) \
             and '(재)' not in prgm_nm:
         return True
     return False
